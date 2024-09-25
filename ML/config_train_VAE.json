@@ -1,0 +1,34 @@
+{
+  "model_name": "VAE.pt",
+  "training_parameters": {
+    "learning_rate": 0.001,
+    "batch_size": 32,
+    "epochs": 1000,
+    "optimizer": "Adam",
+    "loss_function": "CrossEntropyLoss",
+    "early_stopping": true
+  },
+  "paths": {
+    "root_dir": "myfolder/",
+    "data_dir": "myfolder/data/",
+    "model_dir": "myfolder/models/",
+    "log_dir": "myfolder/logs/"
+  },
+  "model_architecture": {
+    "latent_dim": 16,
+    "latent_channel": 16,
+    "dropout_rate": 0.1
+  },
+  "dataset": {
+    "validation_split": 0.1,
+    "test_split": 0.1,
+    "plot_examples": false,
+    "random_state": 25
+  },
+  "device": "cuda",
+  "checkpointing": {
+    "save_checkpoints": true,
+    "checkpoint_interval": 100,
+    "checkpoint_dir": "myfolder/models/"
+  }
+}
