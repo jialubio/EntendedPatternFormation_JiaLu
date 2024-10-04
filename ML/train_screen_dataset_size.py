@@ -1,10 +1,12 @@
 import os
+import json
 import matplotlib.pyplot as plt
 import numpy as np
 import argparse
-import torch.optim as optim
+from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
+from datetime import datetime
 import torch
 from torch.nn import MSELoss
 from torch.optim import Adam
@@ -12,7 +14,7 @@ from torch.optim.lr_scheduler import LambdaLR, ExponentialLR
 from torch.utils.data import DataLoader
 from resources.plot_utils import plot_R2
 from VAE_core import VAE, train_VAE, validate_VAE, test_VAE
-from MLP_VAE_core import CombinedModel, train_combined, validate_combined, test_combined
+from MLP_VAE_core import CustomDataset, CombinedModel, train_combined, validate_combined, test_combined, count_parameters
 
 def scale_feature(value, min_val, max_val, option):
     if option == "linear":
@@ -30,42 +32,51 @@ def scale_dataset(dataset, ranges, opt):
         scaled_dataset[:, i] = [scale_feature(val, min_val, max_val, scaling_option) for val in dataset[:, i]]
     return scaled_dataset
 
-def warmup_scheduler(epoch, warmup_epochs):
-    if epoch < warmup_epochs:
-        return (epoch + 1) / warmup_epochs
-    else:
-        return 1.0
     
-    
-def main():
+def main(config_file):
 
     # Load config file
     with open(config_file, 'r') as f:
         config = json.load(f)
+    print(config)
 
     # Set paths
-    data_dir = config["paths"]["data_dir"]
-    model_dir = config["paths"]["model_dir"]
-    log_dir = config["paths"]["log_dir"]
-
+    data_dir = config['paths']['data_dir']
+    model_dir = config['paths']['model_dir']
+    log_dir = config['paths']['log_dir']
+    checkpoint_dir = config['checkpointing']['checkpoint_dir']
+    
+    # Get current time, use as folder name for this training
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    foldername = f"{current_time}"
+    
+    model_dir = os.path.join(log_dir, model_dir)
+    log_dir = os.path.join(log_dir, foldername)
+    checkpoint_dir = os.path.join(checkpoint_dir, foldername)
+    
+    # Create the new folder
+    os.makedirs(model_dir, exist_ok=True) 
+    os.makedirs(log_dir, exist_ok=True) 
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    
     # Load RFP profiles
-    data_array = np.load(os.path.join(data_dir, 'all_outputs.npy'))
+    data_array = np.load(os.path.join(data_dir, config["dataset"]["outputs_filename"]))
     data_array = data_array.reshape([-1, 3, 201])
     RFP_data = data_array[:, 1, :].squeeze()
     normalized_RFP = RFP_data / RFP_data.max(axis=1, keepdims=True)
     normalized_RFP = normalized_RFP.reshape([-1, 1, 201])
 
     # Parameters 
-    data_array = np.load(os.path.join(data_dir, 'all_params.npy')) # original scale
+    params_array = np.load(os.path.join(data_dir, config["dataset"]["params_filename"])) # original scale
     scaling_ranges = config['dataset']['scaling_ranges']
     scaling_options = config['dataset']['scaling_options']
     all_params = config['dataset']['all_params']
-    sceening_params = config['dataset']['sceening_params']
-    selected_param_idx = [all_params.index(param) for param in sceening_params]
-    params_array = params_array[:, selected_param_idx]
+    sceening_params = config['dataset']['selected_params']
+#     selected_param_idx = [all_params.index(param) for param in sceening_params]
+#     params_array = params_array[:, selected_param_idx]
 
     # Pattern types
-    pattern_types_array = np.load(os.path.join(data_dir, 'all_types.npy'))
+    pattern_types_array = np.load(os.path.join(data_dir, config["dataset"]["types_filename"]))
     pattern_types_array = pattern_types_array[:, 1]
     
     print('---------------------------------------------')
@@ -107,7 +118,7 @@ def main():
         validation_split = validation_split_list[i]
 
         # Split train and validation datasets
-        validation_split = config["dataset"]["validation_split"]
+        validation_split = validation_split_list[i]
         train_data, valid_data, _, _ = train_test_split(train_data_all, range(train_data_all.shape[0]), test_size=validation_split, random_state=random_state)
         train_params, valid_params, _, _ = train_test_split(train_params_all, range(train_params_all.shape[0]), test_size=validation_split, random_state=random_state)
         train_labels, valid_labels, _, _ = train_test_split(train_labels_all, range(train_labels_all.shape[0]), test_size=validation_split, random_state=random_state)
@@ -145,7 +156,7 @@ def main():
         alpha = config['training_parameters']['alpha_VAE'] 
         
         criterion = MSELoss()
-        optimizer = optim.Adam(vae.parameters(), lr=lr)
+        optimizer = Adam(vae.parameters(), lr=lr)
 
         # Early stopping
         best_valid_loss = np.inf
@@ -154,8 +165,14 @@ def main():
 
         # Warm up
         warmup_epochs_VAE = config['training_parameters']['warmup_epochs_VAE']
-        scheduler1 = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_scheduler)
-        scheduler2 = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
+        def warmup_scheduler_VAE(epoch):
+            if epoch < warmup_epochs_VAE:
+                return (epoch + 1) / warmup_epochs_VAE
+            else:
+                return 1.0
+            
+        scheduler1 = LambdaLR(optimizer, lr_lambda=warmup_scheduler_VAE)
+        scheduler2 = ExponentialLR(optimizer, gamma=gamma)
 
         # Train 
         train_loss_history = []
@@ -170,6 +187,10 @@ def main():
             train_loss_history.append(train_loss)
             valid_loss_history.append(valid_loss)
             test_loss_history.append(test_loss)
+            
+            # Clamp minimum learning rate
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = max(param_group['lr'], min_lr)
 
             # Print loss
             if (epoch) % 5 == 0: # every 5 epochs
@@ -229,13 +250,13 @@ def main():
 
         print('------------------- MLP training ---------------------------')
         # Create datasets
-        train_dataset = CustomDataset_with_type(torch.tensor(train_params, dtype=torch.float32), 
+        train_dataset = CustomDataset(torch.tensor(train_params, dtype=torch.float32), 
                                 torch.tensor(train_data, dtype=torch.float32),
                                 torch.tensor(train_labels, dtype=torch.float32))
-        valid_dataset = CustomDataset_with_type(torch.tensor(valid_params, dtype=torch.float32), 
+        valid_dataset = CustomDataset(torch.tensor(valid_params, dtype=torch.float32), 
                                     torch.tensor(valid_data, dtype=torch.float32),
                                     torch.tensor(valid_labels, dtype=torch.float32))
-        test_dataset = CustomDataset_with_type(torch.tensor(test_params, dtype=torch.float32), 
+        test_dataset = CustomDataset(torch.tensor(test_params, dtype=torch.float32), 
                                     torch.tensor(test_data, dtype=torch.float32),
                                     torch.tensor(test_labels, dtype=torch.float32))
         # Create data loaders
@@ -272,8 +293,13 @@ def main():
 
         #  Warmup 
         warmup_epochs_combined = config['training_parameters']['warmup_epochs_combined']
+        def warmup_scheduler_combined(epoch):
+            if epoch < warmup_epochs_combined:
+                return (epoch + 1) / warmup_epochs_combined
+            else:
+                return 1.0
         # Scheduler 
-        scheduler1 = LambdaLR(optimizer, lr_lambda=warmup_scheduler)
+        scheduler1 = LambdaLR(optimizer, lr_lambda=warmup_scheduler_combined)
         scheduler2 = ExponentialLR(optimizer, gamma=0.995)
 
         # Early stopping setup
@@ -385,10 +411,11 @@ def main():
     axs[1].set_title('MLP - VAE')
     plt.tight_layout()
     plt.savefig(os.path.join(log_dir, 'test accuracy vs training dataset size.png'))
-    plt.show()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Screen MLP-VAE models training dataset size.')
     parser.add_argument('config', type=str, help='JSON configuration filename')
     args = parser.parse_args()
     main(args.config)
+    
+    

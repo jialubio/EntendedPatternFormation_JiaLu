@@ -11,13 +11,20 @@
     "epochs": 1000,
     "optimizer": "Adam",
     "loss_function": "CrossEntropyLoss",
-    "early_stopping": true
+    "early_stopping": true,
+    "min_lr":5e-6,
+    "gamma":0.99,
+    "alpha":2e-5,
+    "weight_decay":1e-5,
+    "warmup_epochs": 10,
+    "patience":30
   },
   "paths": {
-    "root_dir": "myfolder/",
-    "data_dir": "myfolder/data/",
-    "model_dir": "myfolder/models/",
-    "log_dir": "myfolder/logs/"
+    "root_dir": "/myfolder/test/",
+    "data_dir": "/myfolder/data/",
+    "model_dir": "/myfolder/models/",
+    "vae_model_dir": "/myfolder/models/",
+    "log_dir": "/myfolder/logs/"
   },
   "model_architecture": {
     "latent_dim": 16,
@@ -25,15 +32,38 @@
     "dropout_rate": 0.1
   },
   "dataset": {
+    "outputs_filename": "all_outputs_cont.npy",
+    "types_filename": "all_types_cont.npy",
+    "params_filename": "all_params_cont.npy",
     "validation_split": 0.1,
     "test_split": 0.1,
     "plot_examples": false,
-    "random_state": 25
+    "random_state": 25,
+    "scaling_ranges": {
+        "DC": [0.0005, 0.125],
+        "aC": [0.1, 1],
+        "aA": [100, 100000],
+        "aT": [10, 8000],
+        "aL": [5, 500],
+        "dA": [0.001, 0.1],
+        "dT": [3, 300],
+        "dL": [0.144, 14.4],
+        "alpha": [1, 5],
+        "beta": [2, 2000],
+        "Kphi": [1, 10],
+        "N0": [200000, 5000000]
+      },
+      "scaling_options": ["exp", "linear", "exp", "exp", "exp", "exp", "exp", "exp", "linear", "exp", "linear", "linear"],
+      "selected_params": ["DC", "aC", "aA", "aT", "aL", "dA", "dT", "dL", "alpha", "beta", "Kphi", "N0"],
+      "all_params": ["DC", "DN", "DA", "DB", "aC", "aA", "aB", "aT", "aL", "bN", "dA", "dB", "dT", "dL", "k1", "k2", "KN", "KP", "KT", "KA", "KB", "alpha", "beta", "Cmax", "a", "b", "m", "n", "Kphi", "l", "N0", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G9", "G10", "G11", "G12", "G13", "G14", "G15", "G16", "G17", "G18", "G19"]
   },
   "device": "cuda",
   "checkpointing": {
     "save_checkpoints": true,
     "checkpoint_interval": 100,
-    "checkpoint_dir": "myfolder/models/"
+    "checkpoint_dir": "/myfolder/checkpoints/"
+  }, 
+  "performance": {
+    "plot_examples": true
   }
 }

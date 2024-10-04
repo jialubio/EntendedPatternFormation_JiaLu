@@ -1,18 +1,24 @@
 {
   "model_name": "VAE.pt",
   "training_parameters": {
-    "learning_rate": 0.001,
     "batch_size": 32,
     "epochs": 1000,
+    "learning_rate": 3e-5,
+    "min_lr": 5e-6,
+    "gamma":0.99,
+    "alpha":2e-5,
+    "weight_decay":1e-5,
     "optimizer": "Adam",
     "loss_function": "CrossEntropyLoss",
-    "early_stopping": true
+    "warmup_epochs": 10,
+    "early_stopping": true,
+    "patience":30
   },
   "paths": {
-    "root_dir": "myfolder/",
-    "data_dir": "myfolder/data/",
-    "model_dir": "myfolder/models/",
-    "log_dir": "myfolder/logs/"
+    "root_dir": "/myfolder/test/",
+    "data_dir": "/myfolder/data/",
+    "model_dir": "/myfolder/models/",
+    "log_dir": "/myfolder/logs/"
   },
   "model_architecture": {
     "latent_dim": 16,
@@ -20,6 +26,9 @@
     "dropout_rate": 0.1
   },
   "dataset": {
+    "outputs_filename": "all_outputs_cont.npy",
+    "types_filename": "all_types_cont.npy",
+    "params_filename": "all_params_cont.txt",
     "validation_split": 0.1,
     "test_split": 0.1,
     "plot_examples": false,
@@ -29,6 +38,9 @@
   "checkpointing": {
     "save_checkpoints": true,
     "checkpoint_interval": 100,
-    "checkpoint_dir": "myfolder/models/"
+    "checkpoint_dir": "/myfolder/checkpoints/"
+  },
+  "performance": {
+    "plot_examples": true
   }
 }

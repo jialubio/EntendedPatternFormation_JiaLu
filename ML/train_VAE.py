@@ -4,16 +4,16 @@ import argparse
 import shutil
 from tqdm import tqdm
 import numpy as np
+from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
+from datetime import datetime
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from sklearn.model_selection import train_test_split
 from resources.plot_utils import plot_R2, plot_training_history
 from resources.checkpoints_utils import save_checkpoint
-from VAE_train import VAE, train_VAE, validate_VAE, test_VAE, count_parameters  # Import from your VAE file
-
-## python train_VAE.py config_train_VAE.json 
+from VAE_core import VAE, train_VAE, validate_VAE, test_VAE, count_parameters  # Import from your VAE file
 
 
 def main(json_file):
@@ -21,33 +21,36 @@ def main(json_file):
     # Load the configuration from the provided JSON file
     with open(json_file, 'r') as f:
         config = json.load(f)
-
+    print(config,flush=True)
+    
     # Device
     device = torch.device(config['device'] if torch.cuda.is_available() else 'cpu')
+    print('Device: ', device,flush=True)
     
     # Set paths from the JSON config
     data_dir = config['paths']['data_dir']
     model_dir = config['paths']['model_dir']
     log_dir = config['paths']['log_dir']
     checkpoint_dir = config['checkpointing']['checkpoint_dir']
-    log_dir = config['paths']['log_dir']
     
-    # Ensure directories exist
-    os.makedirs(model_dir, exist_ok=True)
-    os.makedirs(log_dir, exist_ok=True)
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    os.makedirs(log_dir, exist_ok=True)
+    # Get current time, use as folder name for this training
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    foldername = f"{current_time}"
+    
+    model_dir = os.path.join(log_dir, model_dir)
+    log_dir = os.path.join(log_dir, foldername)
+    checkpoint_dir = os.path.join(checkpoint_dir, foldername)
+    
+    # Create the new folder
+    os.makedirs(model_dir, exist_ok=True) 
+    os.makedirs(log_dir, exist_ok=True) 
+    os.makedirs(checkpoint_dir, exist_ok=True) 
 
-    # # Set up logging
     # Copy config file to folder for logging
     shutil.copy(json_file, log_dir)
-    # Use logging
-    # log_file = os.path.join(log_dir, 'training.log')
-    # logger = setup_logger(log_file)
-    # log_config(config, logger)   # Log the configuration setup
-
+   
     # RFP profiles
-    filename = os.path.join(data_dir, 'all_outputs.npy')
+    filename = os.path.join(data_dir, config["dataset"]["outputs_filename"])
     data_array = np.load(filename)
     data_array = data_array.reshape([-1, 3, 201])
     RFP_data = data_array[:, 1, :].squeeze()
@@ -71,18 +74,19 @@ def main(json_file):
                 axs[i, j].axis('off')
         plt.tight_layout()
         plt.subplots_adjust(top=0.95)
-        plt.show()
+        figname = os.path.join(log_dir, 'data.png')
+        fig.savefig(figname)  
 
     # Model and training parameters from JSON config
     batch_size = config['training_parameters']['batch_size']
     latent_dim = config['model_architecture']['latent_dim']
     latent_channel = config['model_architecture']['latent_channel']
-    alpha = 2e-5  
+    alpha = config['training_parameters']['alpha'] 
     lr = config['training_parameters']['learning_rate']
-    min_lr = 5e-6
+    min_lr = config['training_parameters']['min_lr']
     epochs = config['training_parameters']['epochs']
-    gamma = 0.99
-    weight_decay = 1e-5
+    gamma = config['training_parameters']['gamma']
+    weight_decay = config['training_parameters']['weight_decay']
     optimizer_name = config['training_parameters']['optimizer']
     if_early_stopping = config['training_parameters']['early_stopping']
 
@@ -125,10 +129,10 @@ def main(json_file):
     # Early stopping
     best_test_loss = np.inf  
     epochs_no_improve = 0  # Counter for epochs since the test loss last improved
-    patience = 30  # Patience for early stopping
+    patience = config['training_parameters']['patience']  # Patience for early stopping
 
     # Learning rate schedulers
-    warmup_epochs = 10
+    warmup_epochs = config['training_parameters']['warmup_epochs']
     def warmup_scheduler(epoch):
         return (epoch + 1) / warmup_epochs if epoch < warmup_epochs else 1.0
 
@@ -158,7 +162,7 @@ def main(json_file):
             print('Epoch: {} Train: {:.7f}, Valid: {:.7f}, Test: {:.7f}, Lr:{:.8f}'.format(epoch + 1, train_loss_history[epoch], valid_loss_history[epoch], test_loss_history[epoch], param_group['lr']))
     
         # Save checkpoint periodically
-        if epoch % config['checkpointing']['checkpoint_interval'] == 0:
+        if (epoch+1) % config['checkpointing']['checkpoint_interval'] == 0:
             save_checkpoint(model, optimizer, epoch, test_loss, checkpoint_dir)
         
         # Update learning rate
@@ -204,22 +208,23 @@ def main(json_file):
     filename = log_dir + 'VAE_test_R2.png'
     plot_R2(test_data_short, test_pred, filename)
 
-    # # Plot examples
-    # fig, axs = plt.subplots(2, 5, figsize=(10, 3))
+    # Plot examples
+    if config["performance"]['plot_examples']:
+        fig, axs = plt.subplots(2, 5, figsize=(10, 3))
+        for i in range(5):
+            axs[0, i].plot(train_data_short[i].squeeze(), label='Original', color='blue')
+            axs[0, i].plot(train_pred[i], label='Reconstructed', color='orange')
+            axs[0, i].set_title(f'Train {i + 1}')
+            # axs[0, i].legend()
 
-    # for i in range(5):
-    #     axs[0, i].plot(train_data_short[i].squeeze(), label='Original', color='blue')
-    #     axs[0, i].plot(train_pred[i], label='Reconstructed', color='orange')
-    #     axs[0, i].set_title(f'Train {i + 1}')
-    #     # axs[0, i].legend()
-
-    # for i in range(5):
-    #     axs[1, i].plot(test_data_short[i].squeeze(), label='Original', color='blue')
-    #     axs[1, i].plot(test_pred[i], label='Reconstructed', color='orange')
-    #     axs[1, i].set_title(f'Test {i + 1}')
-    #     # axs[1, i].legend()
-    # plt.tight_layout()
-    # plt.show()
+        for i in range(5):
+            axs[1, i].plot(test_data_short[i].squeeze(), label='Original', color='blue')
+            axs[1, i].plot(test_pred[i], label='Reconstructed', color='orange')
+            axs[1, i].set_title(f'Test {i + 1}')
+            # axs[1, i].legend()
+        plt.tight_layout()
+        figname = os.path.join(log_dir, 'rand_VAE_preds.png')
+        fig.savefig(figname)
 
     # Save final model
     final_model_path = os.path.join(model_dir, config['model_name'])
@@ -232,3 +237,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(args.config)
 
+# sbatch -p youlab-gpu --gres=gpu:1 --cpus-per-task=4 --mem=64G --wrap="python3 -u train_VAE.py config_train_VAE.json"

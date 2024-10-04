@@ -215,7 +215,7 @@ class CNNDecoder(nn.Module):
             )
     def forward(self, z):
         x = self.fc(z)
-        x = x.view(x.size(0), latent_channel, seq_length)
+        x = x.view(x.size(0), self.latent_channel, self.seq_length)
         x = self.decoder(x)
         return F.relu(x)
     

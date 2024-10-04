@@ -7,22 +7,22 @@
   },
   "training_parameters": {
     "batch_size": 32,
-    "epochs_VAE": 1000,
-    "epochs_combined": 1000,
+    "epochs_VAE": 1,
+    "epochs_combined": 1,
     "learning_rate_VAE": 3e-5,
-    "learning_rate_combined": 1e-4,
+    "learning_rate_combined": 0.001,
     "optimizer_VAE": "Adam",
     "optimizer_combined": "Adam",
     "loss_function_VAE": "CrossEntropyLoss",
     "loss_function_combined": "CrossEntropyLoss",
     "early_stopping_VAE": true,
     "early_stopping_combined": true,
-    "warmup_epochs_VAE": 8,
-    "warmup_epochs_combined": 8,
+    "warmup_epochs_VAE": 10,
+    "warmup_epochs_combined": 10,
     "patience_VAE": 30,
     "patience_combined": 30,
-    "min_lr_VAE": 1e-7,
-    "min_lr_combined": 1e-7,
+    "min_lr_VAE": 3e-5,
+    "min_lr_combined": 5e-6,
     "gamma_VAE": 0.99,
     "gamma_combined": 0.99,
     "weight_decay_VAE": 1e-5,
@@ -31,17 +31,21 @@
     "alpha_combined": 2e-5 
   },
   "paths": {
-    "root_dir": "myfolder/",
-    "data_dir": "myfolder/data/",
-    "model_dir": "myfolder/models/",
-    "log_dir": "myfolder/logs/"
-  },
+    "root_dir": "/myfolder/test/",
+      "data_dir": "/myfolder/data/",
+      "model_dir": "/myfolder/models/",
+      "vae_model_dir": "/myfolder/models/",
+    "log_dir": "/myfolder/logs/"
+    },
   "model_architecture": {
     "latent_dim": 16,
     "latent_channel": 16,
     "dropout_rate": 0.1
   },
   "dataset": {
+    "outputs_filename": "all_outputs_cont.npy",
+    "types_filename": "all_types_cont.npy",
+    "params_filename": "all_params_cont.npy",
     "validation_split_list": [0.1, 0.25, 0.5, 0.75, 0.9, 0.99],
     "test_split": 0.1,
     "plot_examples": false,
@@ -68,6 +72,9 @@
   "checkpointing": {
     "save_checkpoints": true,
     "checkpoint_interval": 100,
-    "checkpoint_dir": "myfolder/models/"
+      "checkpoint_dir": "/myfolder/checkpoints/"
+  },
+    "performance": {
+      "plot_examples": true
   }
 }

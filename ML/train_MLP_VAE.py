@@ -8,14 +8,23 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
 from sklearn.utils import shuffle
+from datetime import datetime
+
 import torch
 import torch.nn as nn
+import torch.optim as optim
 from torch.utils.data import DataLoader
 from resources.data_utils import peak_to_ring_num, scale_dataset, get_RFP_type 
-from resources.plot_utils import plot_R2, plot_profiles_peak_1channel
+from resources.plot_utils import plot_R2, plot_profiles_peak_1channel, plot_training_history
 from MLP_VAE_core import CustomDataset, CombinedModel, train_combined, validate_combined, test_combined, count_parameters
-from VAE_train import VAE 
+from VAE_core import VAE 
 
+def warmup_scheduler(epoch):
+    if epoch < warmup_epochs:
+        return (epoch + 1) / warmup_epochs
+    else:
+        return 1.0
+    
 def R2_acc_by_type(ori_types, pred_types, ori_data, pred_data, target_class):
 
     # Compute R2
@@ -32,17 +41,27 @@ def R2_acc_by_type(ori_types, pred_types, ori_data, pred_data, target_class):
     else:
         r2 = 0
         
+    correct_predictions = sum([1 for i in indices if ori_types[i] == pred_types[i]])
+    total_predictions = len(indices)
+    
+    if total_predictions > 0:
+        accuracy = correct_predictions / total_predictions
+    else:
+        accuracy = 0
+
     return r2, accuracy, correct_predictions, total_predictions
 
 
-def main():
+def main(json_file):
 
-       # Load the configuration from the provided JSON file
+    # Load the configuration from the provided JSON file
     with open(json_file, 'r') as f:
         config = json.load(f)
-
+    print(config)
+    
     # Device
     device = torch.device(config['device'] if torch.cuda.is_available() else 'cpu')
+    print(device)
     
     # Set paths from the JSON config
     data_dir = config['paths']['data_dir']
@@ -50,19 +69,26 @@ def main():
     log_dir = config['paths']['log_dir']
     checkpoint_dir = config['checkpointing']['checkpoint_dir']
     log_dir = config['paths']['log_dir']
+    vae_model_dir = config['paths']['vae_model_dir']
+
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    foldername = f"{current_time}"
     
-    # Ensure directories exist
-    os.makedirs(model_dir, exist_ok=True)
-    os.makedirs(log_dir, exist_ok=True)
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    os.makedirs(log_dir, exist_ok=True)
+    model_dir = os.path.join(log_dir, model_dir)
+    log_dir = os.path.join(log_dir, foldername)
+    checkpoint_dir = os.path.join(checkpoint_dir, foldername)
+    
+    # Create the new folder
+    os.makedirs(model_dir, exist_ok=True) 
+    os.makedirs(log_dir, exist_ok=True) 
+    os.makedirs(checkpoint_dir, exist_ok=True) 
 
     # Logging
     shutil.copy(json_file, log_dir)
 
     ## -------------------- Read in training data --------------------
     # RFP profiles
-    data_array =  np.load(os.path.join(data_dir, 'all_outputs.npy'))
+    data_array =  np.load(os.path.join(data_dir, config["dataset"]["outputs_filename"]))
     data_array = data_array.reshape([-1, 3, 201])
     RFP_data = data_array[:, 1, :].squeeze()
     print(f"RFP profiles: {RFP_data.shape}")
@@ -73,34 +99,18 @@ def main():
     print(f"Normalized RFP profiles: {normalized_RFP.shape}")
 
     # Parameters 
-    params_array = np.load(os.path.join(data_dir + 'all_params.npy' ))
-    scaling_ranges = {
-        'DC': [0.5e-3, 12.5e-2],
-        'aC': [0.1, 1],
-        'aA': [100, 100000],
-        'aT': [10, 8000],
-        'aL': [5, 500],
-        'dA': [0.001, 0.1],
-        'dT': [3, 300],
-        'dL': [0.144, 14.4],
-        'alpha': [1, 5],
-        'beta':  [2, 2000],
-        'Kphi':  [1, 10],
-        'N0':  [200000, 5000000]
-    }
-    scaling_options = ['exp','linear','exp','exp','exp',
-                    'exp','exp','exp','linear','exp',
-                    'linear','linear']
-    all_params = ['DC', 'DN', 'DA', 'DB', 'aC','aA', 'aB', 'aT', 'aL', 'bN','dA', 'dB', 'dT', 'dL', 'k1', 
-                'k2', 'KN', 'KP', 'KT', 'KA', 'KB', 'alpha','beta', 'Cmax', 'a', 'b', 'm', 'n', 'Kphi', 'l', 
-                'N0', 'G1','G2','G3','G4','G5','G6','G7','G8','G9','G10','G11','G12', 'G13','G14',
-                'G15','G16','G17','G18', 'G19', 'alpha_p','beta_p', 'seeding_v']
-    sceening_params = ['DC',  'aC', 'aA', 'aT', 'aL', 'dA','dT', 'dL', 'alpha','beta','Kphi', 'N0']
+    params_array = np.load(os.path.join(data_dir + config["dataset"]["params_filename"]))
+    print(f"params_array: {params_array.shape}")
+    scaling_ranges = config["dataset"]["scaling_ranges"]
+    scaling_options = config["dataset"]["scaling_options"]
+    all_params = config["dataset"]["all_params"]
+    sceening_params = config["dataset"]["selected_params"]
     selected_param_idx = [all_params.index(param) for param in sceening_params]
-    params_array = params_array[:, selected_param_idx]
+#     params_array = params_array[:, selected_param_idx]
+#     print(f"params_array: {params_array.shape}")
 
     # Pattern types
-    pattern_types_array = np.load(os.path.join(data_dir, 'all_types.npy'))
+    pattern_types_array = np.load(os.path.join(data_dir, config["dataset"]["types_filename"]), allow_pickle=True)
     RFP_types_array = pattern_types_array[:, 1]
 
     # Check size
@@ -195,17 +205,16 @@ def main():
     print("The model has", count_parameters(model), "trainable parameters")
 
     # Training setup
-    min_lr = 1e-7     
-    epochs = 1000
-    gamma = 0.98
-    weight_decay = 1e-5
-    alpha = 0 # 2e-5 
+    min_lr = config['training_parameters']['min_lr']  
+    epochs = config['training_parameters']['epochs']
+    gamma = config['training_parameters']['gamma']
+    weight_decay = config['training_parameters']['weight_decay']
+    alpha = config['training_parameters']['alpha']
     lr = config['training_parameters']['learning_rate']
     epochs = config['training_parameters']['epochs']
     optimizer_name = config['training_parameters']['optimizer']
     if_early_stopping = config['training_parameters']['early_stopping']
 
-    criterion = nn.MSELoss()
     # Training setup
     criterion = nn.MSELoss()
     optimizer_dict = {
@@ -218,15 +227,16 @@ def main():
     # Early stopping 
     best_valid_loss = np.inf  
     epochs_no_improve = 0  
-    patience = 30 
+    patience = config['training_parameters']['patience'] 
 
     # Warm up
-    warmup_epochs = 10
+    warmup_epochs = config['training_parameters']['warmup_epochs'] 
     def warmup_scheduler(epoch):
         if epoch < warmup_epochs:
             return (epoch + 1) / warmup_epochs
         else:
             return 1.0
+        
     scheduler1 = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_scheduler)
     scheduler2 = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
 
@@ -235,7 +245,7 @@ def main():
     valid_loss_history = []
     test_loss_history = []
 
-    for epoch in range(epochs):
+    for epoch in tqdm(range(epochs)):
 
         train_loss = train_combined(model, train_loader, optimizer, criterion, alpha, device)
         valid_loss = validate_combined(model, valid_loader, criterion, alpha, device)
@@ -254,7 +264,7 @@ def main():
             print('Epoch: {} Train: {:.7f}, Valid: {:.7f}, Test: {:.7f}, Lr:{:.8f}'.format(epoch + 1, train_loss_history[epoch], valid_loss_history[epoch], test_loss_history[epoch], param_group['lr']))
         
         # Save checkpoint periodically
-        if epoch % config['checkpointing']['checkpoint_interval'] == 0:
+        if (epoch+1) % config['checkpointing']['checkpoint_interval'] == 0:
             save_checkpoint(model, optimizer, epoch, test_loss, checkpoint_dir)
 
         # Update learning rate
@@ -275,14 +285,12 @@ def main():
                 print('Early stopping!')
                 break  # Exit the loop
 
-
     # Plotting the loss history
     filename = os.path.join(log_dir, 'train_history.png')
     plot_training_history(filename, train_loss_history, valid_loss_history, test_loss_history)
 
     ## Save
-    model_path = os.path.join(output_dir,"MLP_VAE.pt")
-    print(model_path)
+    model_path = os.path.join(model_dir, config['model_name']['combined_model_name'])
     torch.save(model.state_dict(), model_path)
 
     ## Traing results
@@ -313,9 +321,9 @@ def main():
     test_pred = np.concatenate(test_pred)#.flatten()
     test_ori = np.concatenate(test_ori)#.flatten()
 
-    filename = output_dir + 'VAE_train_R2.png'
+    filename = log_dir + 'VAE_train_R2.png'
     plot_R2(train_ori, train_pred, filename)
-    filename = output_dir + 'VAE_test_R2.png'
+    filename = log_dir + 'VAE_test_R2.png'
     plot_R2(test_ori, test_pred, filename)
 
     ## ---------------- Accuracy by class ----------------
@@ -353,8 +361,21 @@ def main():
     print(' 3 ring --- R2: ', R2_3, ' , acc: ', acc_3 , ', correct#: ', correct_3, ', total#: ', total_3)
     print(' 4 ring --- R2: ', R2_4, ' , acc: ', acc_4 , ', correct#: ', correct_4, ', total#: ', total_4)
         
+    output = (
+    f"1 ring --- R2: {R2_1}, acc: {acc_1}, correct#: {correct_1}, total#: {total_1}\n"
+    f"2 ring --- R2: {R2_2}, acc: {acc_2}, correct#: {correct_2}, total#: {total_2}\n"
+    f"3 ring --- R2: {R2_3}, acc: {acc_3}, correct#: {correct_3}, total#: {total_3}\n"
+    f"4 ring --- R2: {R2_4}, acc: {acc_4}, correct#: {correct_4}, total#: {total_4}\n"
+    )
+
+    # Write the output to a file
+    with open(os.path.join(log_dir,'results.txt'), 'w') as f:
+        f.write(output)
+    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train the MLP-VAE from end to end.')
     parser.add_argument('config', type=str, help='JSON configuration filename')
     args = parser.parse_args()
     main(args.config)
+
+# sbatch -p youlab-gpu --gres=gpu:1 --cpus-per-task=4 --mem=64G --wrap="python3 -u train_MLP_VAE.py config_train_MLP_VAE.json"
